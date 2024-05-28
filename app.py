@@ -1,24 +1,49 @@
+import streamlit as st
+import threading
+import os
 from flask import Flask, render_template, Response, request, send_from_directory
-import tensorflow as tf, cv2, threading, numpy as np, sys, os
+import tensorflow as tf
+import cv2
+import numpy as np
 from werkzeug.utils import secure_filename
 from evaluation import *
 
+# Flask app
 app = Flask(__name__, template_folder='template')
 
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Load the model
+interpreter = tf.lite.Interpreter(model_path="model.tflite")
+interpreter.allocate_tensors()
+
+# Input and output details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+input_size = input_details[0]['shape'][1]
 
 def process_image(image_path):
     # Load the input image
     image = cv2.imread(image_path)
-
-    # Get the original image size
-    original_height, original_width, _ = image.shape
 
     # Resize and pad the image to the model's input size
     input_image = cv2.resize(image, (input_size, input_size))
     input_image = np.expand_dims(input_image, axis=0)
 
     # Run model inference
-    keypoints_with_scores = movenet(input_image)
+    interpreter.set_tensor(input_details[0]['index'], input_image)
+    interpreter.invoke()
+    keypoints_with_scores = interpreter.get_tensor(output_details[0]['index'])
 
     # Visualize the predictions with the original image
     output_overlay = draw_prediction_on_image(image, keypoints_with_scores)
@@ -28,31 +53,28 @@ def process_image(image_path):
     cv2.imwrite(result_image_name, output_overlay)
 
     return result_image_name
-    
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        # Check if a file was uploaded
         if 'file' not in request.files:
             return 'No file part'
 
         file = request.files['file']
-
-        # If user does not select a file, browser also
-        # submits an empty part without filename
         if file.filename == '':
             return 'No selected file'
 
-        if file:
-            # Save the uploaded image file
+        if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            upload_path = os.path.join('medias', filename)
+            upload_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(upload_path)
-
-            predict_image = process_image(upload_path)
-
-            # Render the result.html template with image paths
-            return render_template('result.html', original_image=upload_path, predict_image=predict_image)
+        
+            # Process the uploaded image and generate a prediction image
+            predict_image_path = process_image(upload_path)
+        
+            return render_template('result.html', original_image=upload_path, predict_image=predict_image_path)
+        else:
+            return 'Invalid file type'
 
     return render_template('index.html')
 
@@ -60,44 +82,27 @@ def index():
 def serve_static(filename):
     return send_from_directory('medias', filename)
 
-
-
-# Load the model
-interpreter = tf.lite.Interpreter(model_path="C:\\Users\\saivi\\Desktop\\SEM-6\\DL\\human-pose-estimation-master\\human-pose-estimation-master\\model.tflite")
-interpreter.allocate_tensors()
-
-# Input and output details
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-input_size = input_details[0]['shape'][1]
-
-# Function to process frames
 def process_frames():
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        
-        # Preprocess frame
+
         frame_resized = cv2.resize(frame, (input_size, input_size))
         input_image = np.expand_dims(frame_resized, axis=0)
-        
-        # Run model inference
+
         interpreter.set_tensor(input_details[0]['index'], input_image)
         interpreter.invoke()
         keypoints_with_scores = interpreter.get_tensor(output_details[0]['index'])
-        
-        # Visualize keypoints on frame
+
         output_frame = draw_prediction_on_image(frame, keypoints_with_scores)
-        
-        # Convert frame to JPEG format
+
         ret, jpeg = cv2.imencode('.jpg', output_frame)
-        
-        # Yield the JPEG frame as a response to the client
+
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n\r\n')
-    
+
     cap.release()
 
 @app.route('/live')
@@ -108,7 +113,15 @@ def live():
 def video_feed():
     return Response(process_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+def run_flask():
+    app.run(host='0.0.0.0', port=5000, debug=True)
 
-
+# Start the Flask app in a separate thread
 if __name__ == '__main__':
-    app.run(debug=True)
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.start()
+
+    # Streamlit app
+    st.title("Hello from Streamlit")
+    st.write("Streamlit is running alongside Flask.")
+    st.write("You can use the Flask server for backend tasks.")
