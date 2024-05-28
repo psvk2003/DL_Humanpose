@@ -1,7 +1,6 @@
 streamlit
 flask
 tensorflow
-opencv-python-headless
 matplotlib
 pandas
 Pillow
