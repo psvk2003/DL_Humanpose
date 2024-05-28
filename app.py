@@ -1,21 +1,20 @@
 import streamlit as st
 from PIL import Image
 import humanpose
-import os
 
-st.title('Human Pose Estimation')
+def main():
+    st.title('Human Pose Estimation')
 
-uploaded_file = st.file_uploader("Choose an image...", type="jpg")
+    uploaded_image = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg"])
+    if uploaded_image is not None:
+        image = Image.open(uploaded_image)
+        st.image(image, caption='Uploaded Image', use_column_width=True)
 
-if uploaded_file is not None:
-    img_path = os.path.join("temp", uploaded_file.name)
-    with open(img_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+        # Perform human pose estimation
+        pose_img = humanpose.process_image(image)
 
-    st.image(Image.open(img_path), caption='Uploaded Image.', use_column_width=True)
-    st.write("Processing...")
+        # Display the result
+        st.image(pose_img, caption='Human Pose Estimation', use_column_width=True)
 
-    keypoints_img, skeleton_img, output_folder = humanpose.process_image(img_path)
-
-    st.image(keypoints_img[:, :, ::-1], caption='Keypoints Image', use_column_width=True)
-    st.image(skeleton_img[:, :, ::-1], caption='Skeleton Image', use_column_width=True)
+if __name__ == '__main__':
+    main()
